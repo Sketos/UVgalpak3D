@@ -7,6 +7,7 @@ from astropy.io import fits
 from visibilities import load_uv_wavelengths_from_fits, load_visibilities_from_fits
 from grid import grid_2d_in_radians
 from transformer import Transformer
+from model import Model
 from plot_utils import plot_cube, plot_visibilities
 
 import numpy as np
@@ -14,12 +15,6 @@ import matplotlib.pyplot as plt
 import emcee
 from multiprocessing import Pool
 
-
-# --- #
-
-
-
-# --- #
 
 sys.path.insert(
     0,
@@ -35,54 +30,75 @@ from emcee_wrapper import emcee_wrapper
 
 
 class Fit:
-    def __init__(self, transformer, model):
+    def __init__(self, transformer, galaxy_model, dv):
 
         self.transformer = transformer
-        self.model
+        self.galaxy_model = galaxy_model
+
+        self.dv = dv
 
 
 
-    def model_cube(self, galaxy_model, galaxy_parameters, dv):
+    def model_cube(self, galaxy_model, galaxy_parameters):
 
         cube, _, _, _ = galaxy_model._create_cube(
-            galaxy_parameters, self.transformer.cube_shape, dv, galaxy_parameters.z
+            galaxy_parameters,
+            shape=self.transformer.cube_shape,
+            z_step_kms=self.dv,
+            zo=galaxy_parameters.z
+        )
+        cube = cube.data
+
+        return cube.reshape(
+            self.transformer.n_channels, self.transformer.total_pixels
         )
 
-        return cube
 
 
+
+
+def log_likelihood_helper(obj, theta):
+    #print("IM AM BEING CALLED: log_likelihood_helper")
+
+    y_model = model(theta)
+
+    chi_squared_real = np.sum(
+        (obj.y[:, :, 0] - y_model[:, :, 0])**2.0 / obj.yerr[:, :, 0]**2.0
+    )
+    chi_squared_imag = np.sum(
+        (obj.y[:, :, 1] - y_model[:, :, 1])**2.0 / obj.yerr[:, :, 1]**2.0
+    )
+
+    return -0.5 * (chi_squared_real + chi_squared_imag)
+
+
+class Data:
+    def __init__(self, x, y, yerr):
+        self.x = x
+        self.y = y
+
+        if yerr is None:
+            self.yerr = np.ones(shape=self.y.shape)
+        else:
+            self.yerr = yerr
 
 
 if __name__ == "__main__":
-    pass
 
-    # NOTE: are these
     filename = "./uv_wavelengths.fits"
     u_wavelengths, v_wavelengths = load_uv_wavelengths_from_fits(
         filename=filename
     )
-    #print(u_wavelengths.shape);exit()
-
     uv_wavelengths = np.stack((u_wavelengths, v_wavelengths), axis=-1)
-    #print(uv_wavelengths.shape);exit()
-
 
     filename = "./visibilities.fits"
     visibilities = fits.getdata(filename=filename)
 
-    # real_visibilities, imag_visibilities = load_visibilities_from_fits(
-    #     filename=filename
-    # )
-    # exit()
-    # visibilities = np.stack((real_visibilities, imag_visibilities), axis=-1)
-
-    #plot_visibilities(visibilities=visibilities);exit()
-    if visibilities.shape == uv_wavelengths.shape:
-        print("OK LETS GO")
-
-    #print(visibilities.shape)
-    #exit()
-    #visibilities = np.random.normal(0.0, 1.0, size=uv_wavelengths.shape)
+    data = Data(
+        x=uv_wavelengths,
+        y=visibilities,
+        yerr=None
+    )
 
     n_pixels = 50
     pixel_scale = 0.1
@@ -97,87 +113,53 @@ if __name__ == "__main__":
     ]).T
 
     transformer = Transformer(
-        uv_wavelengths=uv_wavelengths, grid=grid_1d_in_radians, preload_transform=True
+        uv_wavelengths=uv_wavelengths,
+        grid=grid_1d_in_radians,
+        preload_transform=True
     )
 
-    # plt.figure()
-    # plt.imshow(transformer.preload_real_shift_matrix, aspect="auto")
-    # plt.show()
-    # exit()
+    galaxy_model = Model()
 
-    # galaxy_parameters = galpak.GalaxyParameters()
-    # galaxy_parameters.x = int(n_pixels / 2.0)
-    # galaxy_parameters.y = int(n_pixels / 2.0)
-    # galaxy_parameters.z = transformer.n_channels / 2.0
-    # galaxy_parameters.flux = 0.25
-    # radius = 1.0 # in units of arcsec
-    # galaxy_parameters.radius = radius / pixel_scale
-    # galaxy_parameters.inclination = 50.0
-    # galaxy_parameters.pa = 65.0
-    # turnover_radius = 0.2 # in units of arcsec
-    # galaxy_parameters.turnover_radius = turnover_radius / pixel_scale
-    # galaxy_parameters.maximum_velocity = 300.0
-    # galaxy_parameters.velocity_dispersion = 50.0
-    #
-    # #print(galaxy_parameters);exit()
-    # # print(dir(galaxy_parameters))
-    # # #print(galaxy_parameters.from_ndarray(a))
-    # # galaxy_parameters = galpak.GalaxyParameters.from_ndarray(a=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
-    # # print(galaxy_parameters)
+    fit = Fit(transformer=transformer, galaxy_model=galaxy_model.galaxy_model, dv=50.0)
 
-    fit = Fit(transformer=transformer)
+
 
     def model(theta):
-        print("IM AM BEING CALLED: MODEL")
-        galaxy_model = galpak.DiskModel(
-            flux_profile='exponential', rotation_curve='isothermal'
-        )
-        dv = 50.0
 
         galaxy_parameters = galpak.GalaxyParameters.from_ndarray(theta)
 
-        model_cube = fit.model_cube(
-            galaxy_model=galaxy_model, galaxy_parameters=galaxy_parameters, dv=dv
-        )
-        model_cube = model_cube.data
-        #model(theta)
-
-        model_cube_reshaped = model_cube.reshape(
-            model_cube.shape[0], int(model_cube.shape[1] * model_cube.shape[2])
+        model_cube_reshaped = fit.model_cube(
+            galaxy_model=fit.galaxy_model, galaxy_parameters=galaxy_parameters
         )
 
-        y_model = transformer.visibilities_from_cube(
+        model_visibilities = transformer.visibilities_from_cube(
             cube_in_1d=model_cube_reshaped
         )
-        #print(y_model.shape)
 
-        return y_model
-
+        return model_visibilities
 
 
+    # theta = [25.00, 25.00, 16.0, 2.50e-01, 7.50, 50.0, 65.0, 2.00, 300.00, 50.00]
+    # model_visibilities = model(theta)
+    #
+    # residuals = data.y - model_visibilities
+    # c = 16
+    # real_residuals = residuals[c, :, 0]
+    # imag_residuals = residuals[c, :, 1]
+    # print(residuals.shape)
+    # #log_likelihood_helper(obj, theta)
+    # plt.figure()
+    # plt.plot(np.ndarray.flatten(real_residuals), np.ndarray.flatten(imag_residuals), linestyle="None", marker=".")
+    # plt.show()
+    #
+    # exit()
 
-    def log_likelihood_helper(obj, theta):
-        print("IM AM BEING CALLED: log_likelihood_helper")
-        y_model = model(theta)
-
-        print("SHAPES = ", y_model.shape, obj.y.shape)
-
-        # NOTE: replace self with name of the object
-        chi_squared_real = np.sum(
-            (obj.y[:, :, 0] - y_model[:, :, 0])**2.0 / obj.yerr[:, :, 0]**2.0
-        )
-
-        chi_squared_imag = np.sum(
-            (obj.y[:, :, 1] - y_model[:, :, 1])**2.0 / obj.yerr[:, :, 1]**2.0
-        )
-
-        return -0.5 * (chi_squared_real + chi_squared_imag)
 
 
 
     class emcee_wrapper:
 
-        def __init__(self, x, y, yerr, mcmc_limits, n_walkers=500):
+        def __init__(self, x, y, yerr, mcmc_limits, nwalkers=500, backend_filename="backend.h5"):
 
             self.x = x
             self.y = y
@@ -189,32 +171,44 @@ if __name__ == "__main__":
                 self.yerr = yerr
 
             # ...
-            self.n_walkers = n_walkers
-
-            # ...
             if mcmc_limits is None:
                 raise ValueError
-            else:
-                self.theta = np.zeros(
-                    shape=mcmc_limits.shape[0]
-                )
 
-            self.n_dim = len(self.theta)
+            self.par_min = mcmc_limits[:, 0]
+            self.par_max = mcmc_limits[:, 1]
 
-            self.par_min, self.par_max = mcmc_limits.T
-            self.par = self.initialize(
-                par_min=self.par_min,
-                par_max=self.par_max,
-                n_dim=self.n_dim,
-                n_walkers=n_walkers
+            self.ndim = mcmc_limits.shape[0]
+
+            self.nwalkers = nwalkers
+
+            # NOTE: The backend is not working properly ...
+            self.backend = emcee.backends.HDFBackend(
+                filename=backend_filename
             )
 
+            self.previous_nsteps = 0
+            try:
+                self.state = self.backend.get_last_sample()
+            except:
+                self.state = self.initialize_state(
+                    par_min=self.par_min,
+                    par_max=self.par_max,
+                    ndim=self.ndim,
+                    nwalkers=self.nwalkers
+                )
+                self.backend.reset(
+                    self.nwalkers, self.ndim
+                )
+
+            self.previous_nsteps += self.backend.iteration
+
+
         @staticmethod
-        def initialize(par_min, par_max, n_dim, n_walkers):
+        def initialize_state(par_min, par_max, ndim, nwalkers):
 
             return np.array([
-                par_min + (par_max - par_min) * np.random.rand(n_dim)
-                for i in range(n_walkers)
+                par_min + (par_max - par_min) * np.random.rand(ndim)
+                for i in range(nwalkers)
             ])
 
 
@@ -222,7 +216,7 @@ if __name__ == "__main__":
 
             # NOTE: make this a function
             condition = np.zeros(
-                shape=self.n_dim, dtype=bool
+                shape=self.ndim, dtype=bool
             )
             for n in range(len(theta)):
                 if self.par_min[n] < theta[n] < self.par_max[n]:
@@ -236,15 +230,12 @@ if __name__ == "__main__":
 
         def log_likelihood(self, theta):
 
-            # y_model = model(self.x, theta)
-            #
-            # return -0.5 * np.sum(
-            #     (self.y - y_model)**2.0 / self.yerr**2.0 + np.log(2.0 * np.pi * self.yerr**2.0)
-            # )
+            # NOTE: pass the object so that the helper function has the data.
+            _log_likelihood = log_likelihood_helper(
+                self, theta
+            )
+            #print("_log_likelihood = ", _log_likelihood)
 
-            print("theta = ", theta)
-            _log_likelihood = log_likelihood_helper(self, theta)
-            print("_log_likelihood = ", _log_likelihood)
             return _log_likelihood
 
 
@@ -263,23 +254,26 @@ if __name__ == "__main__":
             return self.log_probability(theta)
 
 
-        def run(self, parallel=False):
+        def run(self, nsteps, parallel=False):
 
             if parallel:
-                with Pool() as pool:
-                    sampler = emcee.EnsembleSampler(
-                        self.n_walkers, self.n_dim, self.log_probability, pool=pool
-                    )
-                    sampler.run_mcmc(
-                        self.par, self.n_walkers, progress=True
-                    )
+                pool = Pool()
             else:
-                sampler = emcee.EnsembleSampler(
-                    self.n_walkers, self.n_dim, self.log_probability
-                )
-                sampler.run_mcmc(
-                    self.par, self.n_walkers, progress=True
-                )
+                pool = None
+
+            sampler = emcee.EnsembleSampler(
+                nwalkers=self.nwalkers,
+                ndim=self.ndim,
+                log_prob_fn=self.log_probability,
+                backend=self.backend,
+                pool=pool
+            )
+
+            sampler.run_mcmc(
+                initial_state=self.state,
+                nsteps=nsteps - self.previous_nsteps,
+                progress=True
+            )
 
             return sampler
 
@@ -292,11 +286,11 @@ if __name__ == "__main__":
     ])
 
     obj = emcee_wrapper(
-        x=uv_wavelengths, y=visibilities, yerr=None, mcmc_limits=model_parameter_limits, n_walkers=200
+        x=uv_wavelengths, y=visibilities, yerr=None, mcmc_limits=model_parameter_limits, nwalkers=200
     )
 
 
-    sampler = obj.run(parallel=False)
+    sampler = obj.run(nsteps=50, parallel=False)
 
     flat_samples = sampler.get_chain(discard=0, thin=15, flat=True)
 
@@ -313,6 +307,23 @@ if __name__ == "__main__":
     plt.show()
 
     exit()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
     """

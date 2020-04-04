@@ -9,21 +9,21 @@ import galpak
 
 
 class Model:
-    def __init__(self, shape):
+    def __init__(self):
 
         self.galaxy_model = galpak.DiskModel(
             flux_profile='exponential', rotation_curve='isothermal'
         )
 
-        self.shape=shape
+        #self.shape = shape
 
-    def create_cube(self, galaxy_parameters, dv):
-
-        cube, _, _, _ = self.galaxy_model._create_cube(
-            galaxy_parameters, self.shape, dv, galaxy_parameters.z
-        )
-
-        return cube
+    # def create_cube(self, galaxy_parameters, dv):
+    #
+    #     cube, _, _, _ = self.galaxy_model._create_cube(
+    #         galaxy_parameters, self.shape, dv, galaxy_parameters.z
+    #     )
+    #
+    #     return cube
 
 
 if __name__ == "__main__":

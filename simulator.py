@@ -7,7 +7,7 @@ from astropy.io import fits
 from visibilities import load_uv_wavelengths_from_fits
 from grid import grid_2d_in_radians
 from transformer import Transformer
-from model import model
+from model import Model
 from plot_utils import plot_cube, plot_visibilities
 
 sys.path.insert(

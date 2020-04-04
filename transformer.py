@@ -4,6 +4,7 @@ import time
 
 from visibilities import load_uv_wavelengths_from_fits
 from grid import grid_2d_in_radians
+from mask import z_mask
 
 # NOTE: only keep packages that are needed.
 from transformer_utils import *
@@ -11,10 +12,18 @@ from plot_utils import *
 
 
 class Transformer:
-    def __init__(self, uv_wavelengths, grid=None, preload_transform=True):
+    def __init__(self, uv_wavelengths, grid=None, z_mask=None, preload_transform=True):
 
         self.uv_wavelengths = uv_wavelengths
-        #print(self.uv_wavelengths.shape); exit()
+        #print(self.uv_wavelengths.shape)#; exit()
+
+        # if self.uv_wavelengths.shape[0] == len(z_mask):
+        #     self.uv_wavelengths = self.uv_wavelengths[z_mask]
+        # else:
+        #     raise ValueError
+
+
+        exit()
 
         self.n_channels = self.uv_wavelengths.shape[0]
 
@@ -33,7 +42,8 @@ class Transformer:
         # TODO: Make the grig a class
         # NOTE: At this point the grid is in radians. This will be made into a function that will hold both grid and grid.in_radians
         self.grid = grid
-        #print(self.grid.shape);exit()
+
+        self.total_pixels = self.grid.shape[0]
 
         #self.grid_shape_in_2d = (int(np.sqrt(self.grid.shape[0])), int(np.sqrt(self.grid.shape[0])), self.grid.shape[-1])
 
@@ -43,9 +53,8 @@ class Transformer:
             int(np.sqrt(self.grid.shape[0]))
         )
 
-        self.total_visibilities = uv_wavelengths.shape[0]
 
-        #self.total_image_pixels = grid.shape_1d
+
 
         self.preload_transform = preload_transform
 
@@ -58,7 +67,6 @@ class Transformer:
             self.preload_real_shift_matrix = preload_real_transforms_inverse(
                 grid_radians=self.grid, uv_wavelengths=self.uv_wavelengths_step
             )
-
 
             self.preload_imag_transforms = preload_imag_transforms(
                 grid_radians=self.grid, uv_wavelengths=self.uv_wavelengths_0
@@ -128,16 +136,19 @@ class Transformer:
 
     def visibilities_from_cube(self, cube_in_1d):
 
-        start = time.time()
-        real_visibilities, imag_visibilities = visibilities_from_cube_via_preloaded_transform_and_shift_matrix(
-            cube_1d=cube_in_1d,
-            preloaded_reals=self.preload_real_transforms,
-            preloaded_imags=self.preload_imag_transforms,
-            shift_matrix_real=self.preload_real_shift_matrix,
-            shift_matrix_imag=self.preload_imag_shift_matrix
-        )
-        end = time.time()
-        print("time for dft:", end - start)
+        if self.preload_transform:
+            start = time.time()
+            real_visibilities, imag_visibilities = visibilities_from_cube_via_preloaded_transform_and_shift_matrix(
+                cube_1d=cube_in_1d,
+                preloaded_reals=self.preload_real_transforms,
+                preloaded_imags=self.preload_imag_transforms,
+                shift_matrix_real=self.preload_real_shift_matrix,
+                shift_matrix_imag=self.preload_imag_shift_matrix
+            )
+            end = time.time()
+            print("time for dft:", end - start)
+        else:
+            raise ValueError
 
         return np.stack((real_visibilities, imag_visibilities), axis=-1)
 
@@ -167,6 +178,26 @@ if __name__ == "__main__":
         np.ndarray.flatten(y_grid_in_radians),
         np.ndarray.flatten(x_grid_in_radians)
     ]).T
+    #print(grid_1d_in_radians.shape);exit()
+
+    #_z_mask = z_mask(n=uv_wavelengths.shape[0], nmin=8, nmax=24)
+
+    transformer = Transformer(
+        uv_wavelengths=uv_wavelengths,
+        grid=grid_1d_in_radians,
+        z_mask=z_mask(
+            n=uv_wavelengths.shape[0], zmin=8, zmax=24
+        ),
+        preload_transform=True
+    )
+
+    cube_in_1d = np.random.normal(
+        0.0, 1.0, size=(transformer.n_channels, transformer.total_pixels)
+    )
+    visibilities = transformer.visibilities_from_cube(cube_in_1d=cube_in_1d)
+    print(visibilities.shape)
+
+    exit()
 
 
 
