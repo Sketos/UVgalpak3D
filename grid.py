@@ -59,5 +59,5 @@ def grid_2d_in_radians(n_pixels, pixel_scale):
 
 
 if __name__ == "__main__":
-
-    grid_2d_in_radians(n_pixels=20, pixel_scale=0.1)
+    pass
+    #grid_2d_in_radians(n_pixels=20, pixel_scale=0.1)

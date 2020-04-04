@@ -3,8 +3,23 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 
 
-def load_visibilities():
-    pass
+def load_visibilities_from_fits(filename):
+
+    data = fits.getdata(filename=filename)
+
+    # NOTE: The shape of the data array is (3, n_channels, n_visibilities), where n_visibilities is ...
+    if len(data.shape) == 3:
+        # NOTE:
+        if data.shape[-1] == 1:
+            raise ValueError
+        elif data.shape[-1] == 2:
+            real_visibilities, imag_visibilities = data
+        elif data.shape[-1] == 3:
+            raise ValueError
+        else:
+            raise ValueError
+
+    return real_visibilities, imag_visibilities
 
 
 def load_uv_wavelengths_from_fits(filename):
@@ -49,7 +64,6 @@ def load_interferometric_data_from_fits(uv_wavelengths_filename):
 
 
 if __name__ =="__main__":
-    pass
 
     filename = "/Users/ccbh87/Desktop/Project/uv_wavelengths.fits"
     load_uv_wavelengths_from_fits(filename=filename)
